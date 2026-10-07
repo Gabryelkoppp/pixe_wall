@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Pixel Wall</title>
+<style>
+  body {
+    margin: 0; padding: 12px; background: #ffffe8; color: #000;
+    font-family: "Times New Roman", Times, serif; font-size: 18px; text-align: center;
+  }
+  #page { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 40px; margin: 6px 0 0; color: #000080; letter-spacing: 1px; }
+  h1 small { font-size: 18px; color: #c00; vertical-align: super; animation: blink 1s steps(2, start) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  .sub { margin: 2px 0 10px; font-style: italic; }
+  hr { border: 0; border-top: 2px groove #bbb; margin: 10px 0; }
+
+  .counter {
+    display: inline-block; background: #000; color: #0f0; padding: 6px 14px; margin: 4px 0 8px;
+    font: bold 20px "Courier New", monospace; border: 3px ridge #888;
+  }
+  .info { font-size: 16px; margin-bottom: 8px; }
+  .info b { color: #000080; }
+  .ticker { background: #000080; color: #ff0; font: bold 17px "Courier New", monospace; padding: 3px 0; margin: 8px 0; }
+
+  #frame { display: inline-block; border: 4px ridge #999; background: #fff; line-height: 0; }
+  #canvas { cursor: crosshair; touch-action: none; display: block; }
+
+  .palette { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; margin: 10px auto; max-width: 420px; }
+  .sw { width: 32px; height: 32px; border: 2px outset #ddd; padding: 0; cursor: pointer; }
+  .sw.on { border: 3px solid #000; outline: 2px solid #ff0; }
+
+  button, input {
+    font: 17px "Times New Roman", Times, serif;
+  }
+  button.bevel {
+    background: #d4d0c8; border: 2px outset #fff; padding: 6px 14px; cursor: pointer; margin: 3px;
+  }
+  button.bevel:active:not(:disabled) { border-style: inset; }
+  button.bevel:disabled { color: #777; cursor: not-allowed; }
+  input[type=text] { border: 2px inset #ccc; padding: 4px 6px; width: 140px; }
+  #msg { min-height: 24px; margin: 6px 0; font-weight: bold; }
+  #msg.err { color: #c00; }
+  #msg.good { color: #060; }
+
+  .admin { border: 2px dashed #c00; background: #fff4f4; padding: 8px 12px; margin: 14px 0; font-size: 16px; text-align: left; }
+  .admin table { border-collapse: collapse; width: 100%; margin-top: 6px; }
+  .admin th, .admin td { border: 1px solid #999; padding: 2px 6px; font-size: 15px; }
+  .admin th { background: #eee; }
+  .foot { font-size: 14px; color: #555; margin-top: 16px; }
+  a { color: #00e; }
+</style>
+</head>
+<body>
+<div id="page">
+  <h1>THE PIXEL WALL <small>NEW!</small></h1>
+  <p class="sub">Escolha uma cor, marque alguns quadradinhos e pinte a parede junto com a turma!</p>
+
+  <div class="counter" id="counter">0 / 0 pixels</div>
+  <div class="info">
+    <span id="conn">conectando...</span> &middot;
+    online: <b id="online">-</b> &middot;
+    container: <b id="host">-</b> &middot;
+    seus pixels: <b id="left">-</b>
+  </div>
+
+  <div id="frame"><canvas id="canvas" width="320" height="320"></canvas></div>
+
+  <div class="palette" id="palette"></div>
+
+  <div>
+    Seu nome: <input type="text" id="nick" maxlength="16" placeholder="anônimo">
+  </div>
+  <div style="margin-top:6px">
+    <button class="bevel" id="paint" disabled>Pintar</button>
+    <button class="bevel" id="clear" disabled>Limpar seleção</button>
+  </div>
+  <div id="msg"></div>
+  <div class="ticker"><marquee id="ticker" scrollamount="5">Bem-vindo à parede! Toque ou arraste sobre o quadro para marcar pixels.</marquee></div>
+
+  <div class="admin" id="admin" hidden>
+    <b>Painel do host</b><br>
+    <button class="bevel" id="reset">Limpar este mural</button>
+    <span id="adminMsg"></span>
+    <div>Murais já usados (guardados no Postgres). Para voltar a um deles, suba com o mesmo
+      <code>WIDTH</code> e <code>HEIGHT</code>.</div>
+    <table id="murals"><tr><th>Tamanho</th><th>Pixels</th><th>Último uso</th></tr></table>
+  </div>
+
+  <hr>
+  <div class="foot">Melhor visualizado no Netscape Navigator 4.0 em 800&times;600 :-)<br>
+    Demo de Docker: Nginx + Node + Redis + Postgres</div>
+</div>
+
+<script>
+(() => {
+  const COLORS = ['#FFFFFF','#E4E4E4','#888888','#222222','#FFA7D1','#E50000','#E59500','#A06A42',
+                  '#E5D900','#94E044','#02BE01','#00D3DD','#0083C7','#0000EA','#CF6EE4','#820080'];
+  const $ = (id) => document.getElementById(id);
+  const load = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const save = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+  const rand = () => (crypto.getRandomValues ? [...crypto.getRandomValues(new Uint8Array(10))]
+    .map((b) => b.toString(16).padStart(2, '0')).join('') : String(Math.random()).slice(2, 22));
+  let myId = load('pw-id'); if (!myId) { myId = 'u' + rand(); save('pw-id', myId); }
+  $('nick').value = load('pw-nick') || '';
+  $('nick').addEventListener('input', () => save('pw-nick', $('nick').value));
+
+  let W = 0, H = 0, cell = 10, maxBatch = 10, pixels = [], total = 0;
+  let color = 5, selected = new Set(), cooldownUntil = 0, pending = false, ws = null, dragMode = null;
+  const cv = $('canvas'), ctx = cv.getContext('2d');
+
+  COLORS.forEach((hex, i) => {
+    const b = document.createElement('button');
+    b.className = 'sw' + (i === color ? ' on' : ''); b.style.background = hex; b.title = hex;
+    b.addEventListener('click', () => {
+      color = i;
+      document.querySelectorAll('.sw').forEach((el, j) => el.classList.toggle('on', j === i));
+      drawAll();
+    });
+    $('palette').appendChild(b);
+  });
+
+  const say = (text, cls = '') => { $('msg').textContent = text; $('msg').className = cls; };
+
+  function layout() {
+    const avail = Math.min(window.innerWidth - 40, 640);
+    cell = Math.max(4, Math.min(24, Math.floor(avail / W)));
+    cv.width = W * cell; cv.height = H * cell;
+    drawAll();
+  }
+  function drawCell(i) {
+    const x = i % W, y = (i - x) / W, px = x * cell, py = y * cell;
+    const isSel = selected.has(i);
+    ctx.fillStyle = isSel ? COLORS[color] : COLORS[pixels[i]];
+    ctx.fillRect(px, py, cell, cell);
+    if (cell >= 8) { ctx.strokeStyle = 'rgba(0,0,0,.12)'; ctx.lineWidth = 1; ctx.strokeRect(px + .5, py + .5, cell - 1, cell - 1); }
+    if (isSel) {
+      ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.setLineDash([3, 2]);
+      ctx.strokeRect(px + 1, py + 1, cell - 2, cell - 2); ctx.setLineDash([]);
+    }
+  }
+  function drawAll() { for (let i = 0; i < W * H; i++) drawCell(i); updateButtons(); }
+
+  function cellAt(ev) {
+    const r = cv.getBoundingClientRect();
+    const x = Math.floor((ev.clientX - r.left) / r.width * W), y = Math.floor((ev.clientY - r.top) / r.height * H);
+    return x >= 0 && x < W && y >= 0 && y < H ? y * W + x : -1;
+  }
+  function apply(i) {
+    if (i < 0) return;
+    if (dragMode === 'add') {
+      if (selected.has(i)) return;
+      if (selected.size >= maxBatch) return say(`No máximo ${maxBatch} pixels por vez.`, 'err');
+      selected.add(i);
+    } else {
+      if (!selected.delete(i)) return;
+    }
+    drawCell(i); updateButtons();
+  }
+  cv.addEventListener('pointerdown', (e) => {
+    if (!W) return;
+    const i = cellAt(e); if (i < 0) return;
+    cv.setPointerCapture(e.pointerId);
+    dragMode = selected.has(i) ? 'remove' : 'add'; say('');
+    apply(i);
+  });
+  cv.addEventListener('pointermove', (e) => { if (dragMode) apply(cellAt(e)); });
+  const stop = () => { dragMode = null; };
+  cv.addEventListener('pointerup', stop); cv.addEventListener('pointercancel', stop);
+
+  function updateButtons() {
+    const n = selected.size, wait = Math.ceil((cooldownUntil - Date.now()) / 1000);
+    $('paint').disabled = n === 0 || pending || wait > 0 || !ws || ws.readyState !== 1;
+    $('paint').textContent = wait > 0 ? `Aguarde ${wait}s` : n ? `Pintar ${n} pixel${n > 1 ? 's' : ''}` : 'Pintar';
+    $('clear').disabled = n === 0;
+    $('counter').textContent = `${total} / ${W * H} pixels`;
+  }
+  setInterval(updateButtons, 250);
+
+  $('clear').addEventListener('click', () => { const old = [...selected]; selected.clear(); old.forEach(drawCell); updateButtons(); });
+  $('paint').addEventListener('click', () => {
+    if (!selected.size || pending) return;
+    const list = [...selected].map((i) => [i % W, Math.floor(i / W), color]);
+    pending = true; updateButtons();
+    ws.send(JSON.stringify({ type: 'paint', id: myId, nick: $('nick').value.trim(), pixels: list }));
+  });
+
+  function startCooldown(s) { cooldownUntil = Date.now() + s * 1000; }
+
+  function connect() {
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    ws.onopen = () => { $('conn').textContent = 'conectado'; };
+    ws.onclose = () => { $('conn').textContent = 'reconectando...'; pending = false; setTimeout(connect, 2000); updateButtons(); };
+    ws.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'init') {
+        W = m.width; H = m.height; maxBatch = m.maxBatch || 1; total = m.total;
+        pixels = [...m.pixels].map((c) => parseInt(c, 16));
+        selected.clear(); $('host').textContent = m.host;
+        $('left').textContent = m.maxPerUser ? 'limite ' + m.maxPerUser : 'sem limite';
+        layout();
+      } else if (m.type === 'pixels') {
+        for (const [x, y, c] of m.pixels) { pixels[y * W + x] = c; drawCell(y * W + x); }
+        total = m.total; updateButtons();
+        $('ticker').textContent = `${m.by} pintou ${m.pixels.length} pixel${m.pixels.length > 1 ? 's' : ''}!   ***   ` + $('ticker').textContent.slice(0, 120);
+      } else if (m.type === 'reset') {
+        pixels = pixels.map(() => 0); total = 0; selected.clear(); drawAll();
+      } else if (m.type === 'online') {
+        $('online').textContent = m.n;
+      } else if (m.type === 'ok') {
+        pending = false; startCooldown(m.wait);
+        const old = [...selected]; selected.clear(); old.forEach(drawCell);
+        if (m.left !== null) $('left').textContent = m.left + ' restantes';
+        say(`${m.n} pixel${m.n > 1 ? 's' : ''} pintado${m.n > 1 ? 's' : ''}!`, 'good'); updateButtons();
+      } else if (m.type === 'cooldown') {
+        pending = false; startCooldown(m.wait); say(`Espere ${m.wait}s para pintar de novo.`, 'err'); updateButtons();
+      } else if (m.type === 'limit') {
+        pending = false; say(`Você já usou seus ${m.max} pixels.`, 'err'); updateButtons();
+      } else if (m.type === 'error') {
+        pending = false; say(m.message, 'err'); updateButtons();
+      }
+    };
+  }
+  window.addEventListener('resize', () => { if (W) layout(); });
+  connect();
+
+  const key = new URLSearchParams(location.search).get('admin');
+  if (key) {
+    $('admin').hidden = false;
+    fetch('/api/murals').then((r) => r.json()).then((d) => {
+      for (const r of d.murals) {
+        const tr = document.createElement('tr');
+        const cur = r.size === d.current ? ' (atual)' : '';
+        [r.size + cur, r.pixels, new Date(r.last_used_at).toLocaleString('pt-BR')].forEach((t) => {
+          const td = document.createElement('td'); td.textContent = t; tr.appendChild(td);
+        });
+        $('murals').appendChild(tr);
+      }
+    }).catch(() => {});
+    let armed = false;
+    $('reset').addEventListener('click', async () => {
+      if (!armed) { armed = true; $('reset').textContent = 'Clique de novo para confirmar'; setTimeout(() => { armed = false; $('reset').textContent = 'Limpar este mural'; }, 3000); return; }
+      armed = false; $('reset').textContent = 'Limpar este mural';
+      const r = await fetch('/api/reset', { method: 'POST', headers: { 'x-admin-key': key } });
+      $('adminMsg').textContent = r.ok ? ' mural limpo' : ' chave inválida';
+    });
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "pixel-wall",
+  "version": "1.0.0",
+  "description": "Mural de pixels colaborativo para a demo de Docker",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/smoke.test.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.23.1",
+    "redis": "~4.7.0",
+    "ws": "^8.18.0"
+  }
+}
